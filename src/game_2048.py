@@ -5,10 +5,11 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, simpledialog
 import pickle
 import os
+import sys
 
 # Constants
 
-GRID_SIZE = 16
+GRID_SIZE = 4
 WIDTH, HEIGHT = GRID_SIZE*50, GRID_SIZE*50
 TILE_SIZE = WIDTH // GRID_SIZE
 FONT_SIZE = 30
@@ -128,13 +129,16 @@ class Game2048:
             return not np.array_equal(temp_grid, self.move_right())
 
     def best_move(self, move_history):
+        moves = ['up', 'down', 'left', 'right']
+        number = random.randint(0,3)
+        return moves[number] # random now
         def calculate_reward(old_grid, new_grid, action, move_history):
             reward = 0
             combinereward = 0
             # Reward for combining tiles
             combined_tiles = np.sum(old_grid) - np.sum(new_grid)
             if combined_tiles > 0:
-                combinereward = combined_tiles * 5  # Reward for combining tiles
+                combinereward = combined_tiles * 10  # Reward for combining tiles
 
             # Penalty for overcrowding
             if np.count_nonzero(new_grid) > GRID_SIZE * GRID_SIZE * 0.75:  
@@ -143,7 +147,7 @@ class Game2048:
             # Count how many tiles have moved
             tiles_moved = np.sum(old_grid != new_grid)
             if tiles_moved > 0:
-                reward += tiles_moved * 0.2  # Reward for moving multiple tiles
+                reward += tiles_moved * 1.2  # Reward for moving multiple tiles
 
             # Check for repeated moves
             if len(move_history) >= 4:
@@ -154,11 +158,7 @@ class Game2048:
                 max_move_count = max(move_counts.values())
                 percentage_repeated = max_move_count / len(move_history)
 
-                # Apply penalty if the percentage exceeds a threshold (e.g., 50%)
-                if percentage_repeated > 0.5:
-                    reward -= 5  # Penalty for excessive repetition of the same move type
-                else:
-                    reward += combinereward
+
                 
                 # Reward for less frequent moves
                 total_moves = len(move_history)
@@ -166,8 +166,8 @@ class Game2048:
                     frequency_count = move_counts.get(action, 0)
                     frequency_percentage = frequency_count / total_moves
 
-                    if frequency_percentage < 0.25:  # If this move is less than 25% of total moves
-                        reward += combinereward * 1.5  # Reward for making less frequent moves
+                    if frequency_percentage < 0.0632:  # If this move is less than 25% of total moves
+                        reward += combinereward * 2.5  # Reward for making less frequent moves
 
             # Update move history
             move_history.append(action)
@@ -216,6 +216,7 @@ class BotPlayer:
         self.filename = filename
         self.learning_rate = 0.1  # Alpha
         self.discount_factor = 0.985  # Gamma
+        self.currentDiscount = 1
         self.exploration_rate = 1.0  # Epsilon
         self.exploration_decay = 0.999  # Decay factor for exploration
         self.min_exploration_rate = 0.1
@@ -283,7 +284,7 @@ class BotPlayer:
         # Count how many tiles have moved
         tiles_moved = np.sum(old_grid != new_grid)
         if tiles_moved > 0:
-            reward += tiles_moved * 0.2  # Reward for moving multiple tiles
+            reward += tiles_moved * 1.2  # Reward for moving multiple tiles
 
         # Check for repeated moves
         if len(move_history) >= 4:
@@ -294,11 +295,7 @@ class BotPlayer:
             max_move_count = max(move_counts.values())
             percentage_repeated = max_move_count / len(move_history)
 
-            # Apply penalty if the percentage exceeds a threshold (e.g., 50%)
-            if percentage_repeated > 0.5:
-                reward -= 5  # Penalty for excessive repetition of the same move type
-            else:
-                reward += combinereward
+
             
             # Reward for less frequent moves
             total_moves = len(move_history)
@@ -306,14 +303,16 @@ class BotPlayer:
                 frequency_count = move_counts.get(action, 0)
                 frequency_percentage = frequency_count / total_moves
 
-                if frequency_percentage < 0.12:  # If this move is less than 25% of total moves
-                    reward += combinereward * 1.5  # Reward for making less frequent moves
+                if frequency_percentage < 0.0632:  # If this move is less than 25% of total moves
+                    reward += combinereward * 2.5  # Reward for making less frequent moves
 
         # Update move history
         move_history.append(action)
         if len(move_history) > 4:  # Keep only the last four moves for checking
             move_history.pop(0)
 
+        reward = reward * self.currentDiscount
+        self.currentDiscount = self.currentDiscount * self.discount_factor
         return reward
 
 
@@ -345,14 +344,14 @@ def draw_grid(screen, grid):
                 
     pygame.display.update()
 
-def start_game(player_type, game_number, bot_file=None):
+def start_game(player_type, game_number, bot_player, bot_file=None):
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("2048 Game")
     clock = pygame.time.Clock()
 
     game = Game2048(player_type)
-    bot_player = BotPlayer(bot_file) if player_type == 'bot' else None
+
     max_tile_achieved = 0  # Initialize to keep track of max tile
     running = True
     moves = 0
@@ -375,7 +374,7 @@ def start_game(player_type, game_number, bot_file=None):
                 reward = bot_player.calculate_reward(old_grid, game.get_board_state(), move, move_history)  # Pass move history
                 bot_player.learn(old_grid, move, reward, game.get_board_state())
                 moves += 1
-                pygame.time.delay(2)
+
 
         draw_grid(screen, game.grid)
 
@@ -388,15 +387,22 @@ def start_game(player_type, game_number, bot_file=None):
 
 
 
-    # Save the bot's Q-table after the game ends
-    if bot_player:
-        bot_player.save(bot_file)
 
-    # Increase the frame rate for smoother gameplay
-    clock.tick(1000)  # Set to a high value for faster execution
+
+
+    clock.tick(6000) # 6000 = 10 ganes/sec
 
     return max_tile_achieved  # Return max tile achieved
 
+class TextRedirector(object):
+    def __init__(self, widget, tag="stdout"):
+        self.widget = widget
+        self.tag = tag
+
+    def write(self, string):
+        self.widget.configure(state="normal")
+        self.widget.insert("end", string, (self.tag,))
+        self.widget.configure(state="disabled")
 
 import matplotlib.pyplot as plt
 
@@ -406,11 +412,15 @@ def main_menu():
         bot_file = bot_file_var.get() if player_type == 'bot' else None
         iterations = int(iteration_entry.get())
         max_tiles = []  # List to store max tiles from each iteration
+        bot_player = BotPlayer(bot_file) if player_type == 'bot' else None
 
         for i in range(iterations):
-            max_tile = start_game(player_type, i, bot_file)  # Assuming start_game returns the max tile
+            max_tile = start_game(player_type, i, bot_player, bot_file)  # Assuming start_game returns the max tile
             max_tiles.append(np.log2(max_tile))
 
+
+        if(bot_player):
+            bot_player.save(bot_file)
         print(f"Max Tiles from {iterations} iterations: {max_tiles}")  # Print or display max tiles
         plot_max_tiles(max_tiles)
 
@@ -441,6 +451,7 @@ def main_menu():
             else:
                 messagebox.showwarning("Warning", "File already exists!")
 
+
     root = tk.Tk()
     root.title("2048 Menu")
 
@@ -458,7 +469,9 @@ def main_menu():
     tk.Button(root, text="Load Bot Data", command=load_bot).pack()
     tk.Button(root, text="Create New Bot Data", command=create_bot).pack()
     tk.Button(root, text="Start Game", command=on_start).pack()
-
+    text = tk.Text(root, wrap="word").pack()
+    sys.stdout = TextRedirector(text, "stdout")
+    sys.stderr = TextRedirector(text, "stderr")
     root.mainloop()
 if __name__ == "__main__":
     main_menu()
