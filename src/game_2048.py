@@ -143,6 +143,8 @@ class BotPlayer:
         self.exploration_decay = 0.999  # Decay factor for exploration
         self.min_exploration_rate = 0.1
         self.n_steps = 3  # Multi-step look-ahead for better strategizing
+        self.previous_sum = 0  # Initialize previous sum for efficiency calculation
+        self.moves_count = 0  # Initialize move count
         
         if filename and os.path.exists(filename):
             self.load(filename)
@@ -188,24 +190,25 @@ class BotPlayer:
         if self.exploration_rate > self.min_exploration_rate:
             self.exploration_rate *= self.exploration_decay
 
-    def calculate_reward(self, old_grid, new_grid, action):
-        # Enhanced reward for merging larger tiles
-        reward = np.max(new_grid) - np.max(old_grid)  # Encourage getting larger tiles
+    def calculate_reward(self, old_grid, new_grid, action, move_history):
+        reward = 0
 
-        # Additional reward for empty spaces, allowing for more future moves
-        empty_cells_before = np.count_nonzero(old_grid == 0)
-        empty_cells_after = np.count_nonzero(new_grid == 0)
-        reward += (empty_cells_after - empty_cells_before) * 2  # Encourage creating empty spaces
+        # Reward for the largest tile on the board
+        max_old_tile = np.max(old_grid)
+        max_new_tile = np.max(new_grid)
+        if max_new_tile > max_old_tile:
+            reward += max_new_tile * 2  # Significantly reward larger tiles
 
-        # Bonus for merging larger tiles (higher value tiles give more reward)
-        merged_tiles = np.max(new_grid) - np.max(old_grid)
-        if merged_tiles >= 128:  # Bonus for large merges
-            reward += merged_tiles // 2  # Higher tiles give more reward
+        # Check for repeated moves
+        if len(move_history) >= 4 and move_history[-1] == move_history[-3] and move_history[-2] == move_history[-4]:
+            reward -= 5  # Penalty for repeating the same two moves
 
-        # Penalize if no change occurred
-        if np.array_equal(old_grid, new_grid):
-            reward -= 1  # Penalize if no valid moves were made
+        # Update move history
+        move_history.append(action)
+        if len(move_history) > 4:  # Keep only the last four moves for checking
+            move_history.pop(0)
 
+        reward += max_new_tile / len(move_history)
         return reward
 
     def save(self, filename):
@@ -244,25 +247,26 @@ def start_game(player_type, game_number, bot_file=None):
     bot_player = BotPlayer(bot_file) if player_type == 'bot' else None
     max_tile_achieved = 0  # Initialize to keep track of max tile
     running = True
+    moves = 0
+    move_history = []  # Initialize move history
 
     while running:
-        moves = 0
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.KEYDOWN:
                 if game.player_type == 'human' and event.key in game.moves:
                     game.move(game.moves[event.key])
+                    move_history.append(game.moves[event.key])  # Record move
 
         if game.player_type == 'bot' and bot_player:
             old_grid = game.get_board_state()
             move = bot_player.choose_move(game)
             if move:
                 game.move(move)
-                reward = bot_player.calculate_reward(old_grid, game.get_board_state(), move)  # Calculate reward properly
+                reward = bot_player.calculate_reward(old_grid, game.get_board_state(), move, move_history)  # Pass move history
                 bot_player.learn(old_grid, move, reward, game.get_board_state())
-                moves = moves + 1
+                moves += 1
                 pygame.time.delay(2)
 
         draw_grid(screen, game.grid)
@@ -271,7 +275,7 @@ def start_game(player_type, game_number, bot_file=None):
         if game.is_game_over():
             game_number = game_number + 1
             max_tile_achieved = np.max(game.grid)  # Get the max tile
-            print("Game ", game_number, "max tile: ", max_tile_achieved, " | Eff: ", (max_tile_achieved/moves))
+            print("Game ", game_number, "max tile: ", max_tile_achieved, " | Eff: ", (max_tile_achieved / moves))
             running = False
 
 
