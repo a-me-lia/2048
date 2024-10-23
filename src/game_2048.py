@@ -8,7 +8,7 @@ import os
 
 # Constants
 
-GRID_SIZE = 4
+GRID_SIZE = 16
 WIDTH, HEIGHT = GRID_SIZE*50, GRID_SIZE*50
 TILE_SIZE = WIDTH // GRID_SIZE
 FONT_SIZE = 30
@@ -29,6 +29,12 @@ TILE_COLORS = {
     4096: (255, 100, 30),
     8192: (255, 50, 20),
     16384: (255, 20, 0),
+    32768: (255, 20, 0),
+    65536: (255, 20, 0),
+    131072: (255, 20, 0),
+    262144: (255, 20, 0),
+    524288: (255, 20, 0),
+    1048576: (255, 20, 0)
 }
 
 import numpy as np
