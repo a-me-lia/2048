@@ -7,10 +7,11 @@ import pickle
 import os
 
 # Constants
-WIDTH, HEIGHT = 400, 400
+
 GRID_SIZE = 4
+WIDTH, HEIGHT = GRID_SIZE*50, GRID_SIZE*50
 TILE_SIZE = WIDTH // GRID_SIZE
-FONT_SIZE = 50
+FONT_SIZE = 30
 BACKGROUND_COLOR = (187, 173, 160)
 TILE_COLORS = {
     0: (205, 193, 180),
@@ -24,14 +25,15 @@ TILE_COLORS = {
     256: (237, 204, 97),
     512: (237, 200, 80),
     1024: (237, 197, 63),
-    2048: (237, 194, 46)
+    2048: (237, 194, 46),
+    4096: (255, 100, 30),
+    8192: (255, 50, 20),
+    16384: (255, 20, 0),
 }
 
 import numpy as np
 import random
 import pygame
-
-GRID_SIZE = 4  # Assuming a 4x4 grid
 
 class Game2048:
     def __init__(self, player_type='human'):
@@ -119,12 +121,81 @@ class Game2048:
         elif direction == 'right':
             return not np.array_equal(temp_grid, self.move_right())
 
-    def best_move(self):
-        # Simple strategy for now: prioritize up and left moves
-        for move in ['up', 'left', 'right', 'down']:
-            if self.is_valid_move(move):
-                return move
-        return None
+    def best_move(self, move_history):
+        def calculate_reward(old_grid, new_grid, action, move_history):
+            reward = 0
+            combinereward = 0
+            # Reward for combining tiles
+            combined_tiles = np.sum(old_grid) - np.sum(new_grid)
+            if combined_tiles > 0:
+                combinereward = combined_tiles * 5  # Reward for combining tiles
+
+            # Penalty for overcrowding
+            if np.count_nonzero(new_grid) > GRID_SIZE * GRID_SIZE * 0.75:  
+                reward += 2 * (np.count_nonzero(new_grid) - GRID_SIZE * GRID_SIZE)  # Penalize for having too many tiles
+
+            # Count how many tiles have moved
+            tiles_moved = np.sum(old_grid != new_grid)
+            if tiles_moved > 0:
+                reward += tiles_moved * 0.2  # Reward for moving multiple tiles
+
+            # Check for repeated moves
+            if len(move_history) >= 4:
+                # Count the occurrences of each action
+                move_counts = {action: move_history.count(action) for action in set(move_history)}
+                
+                # Calculate the percentage of the most common move
+                max_move_count = max(move_counts.values())
+                percentage_repeated = max_move_count / len(move_history)
+
+                # Apply penalty if the percentage exceeds a threshold (e.g., 50%)
+                if percentage_repeated > 0.5:
+                    reward -= 5  # Penalty for excessive repetition of the same move type
+                else:
+                    reward += combinereward
+                
+                # Reward for less frequent moves
+                total_moves = len(move_history)
+                if total_moves > 12:
+                    frequency_count = move_counts.get(action, 0)
+                    frequency_percentage = frequency_count / total_moves
+
+                    if frequency_percentage < 0.25:  # If this move is less than 25% of total moves
+                        reward += combinereward * 1.5  # Reward for making less frequent moves
+
+            # Update move history
+            move_history.append(action)
+            if len(move_history) > 4:  # Keep only the last four moves for checking
+                move_history.pop(0)
+
+            return reward
+
+        best_action = None
+        best_reward = float('-inf')  # Initialize best reward to negative infinity
+
+        for action in ['up', 'down', 'left', 'right']:
+            reward = 0
+            # Simulate the move
+            if self.is_valid_move(action) and action == 'up':
+                new_grid = self.move_up()
+            elif self.is_valid_move(action) and action == 'down':
+                new_grid = self.move_down()
+            elif self.is_valid_move(action) and action == 'left':
+                new_grid = self.move_left()
+            elif self.is_valid_move(action) and action == 'right':
+                new_grid = self.move_right()
+            mhc = move_history
+            # Calculate the reward for the new grid
+            if self.is_valid_move(action) :
+                reward = calculate_reward(self.grid, new_grid, action, mhc)  # Use your reward function
+
+
+            # Check if this action is the best so far
+            if reward >= best_reward:
+                best_reward = reward
+                best_action = action
+
+        return best_action  # Return the action that yields the highest reward
 
     def get_board_state(self):
         return self.grid.copy()
@@ -138,11 +209,11 @@ class BotPlayer:
         self.q_table = {}
         self.filename = filename
         self.learning_rate = 0.1  # Alpha
-        self.discount_factor = 0.95  # Gamma
+        self.discount_factor = 0.985  # Gamma
         self.exploration_rate = 1.0  # Epsilon
         self.exploration_decay = 0.999  # Decay factor for exploration
         self.min_exploration_rate = 0.1
-        self.n_steps = 3  # Multi-step look-ahead for better strategizing
+
         self.previous_sum = 0  # Initialize previous sum for efficiency calculation
         self.moves_count = 0  # Initialize move count
         
@@ -152,12 +223,12 @@ class BotPlayer:
     def get_state_key(self, grid):
         return str(grid.reshape(GRID_SIZE * GRID_SIZE))
 
-    def choose_move(self, game):
+    def choose_move(self, game, move_history):
         state_key = self.get_state_key(game.get_board_state())
         
         # Exploration vs. Exploitation
         if random.random() < self.exploration_rate:
-            return game.best_move()  # Random valid move
+            return game.best_move(move_history)
         else:
             # Exploitation: Choose the best action based on Q-values
             q_values = self.q_table.get(state_key, {})
@@ -190,26 +261,57 @@ class BotPlayer:
         if self.exploration_rate > self.min_exploration_rate:
             self.exploration_rate *= self.exploration_decay
 
+
     def calculate_reward(self, old_grid, new_grid, action, move_history):
         reward = 0
+        combinereward = 0
+        # Reward for combining tiles
+        combined_tiles = np.sum(old_grid) - np.sum(new_grid)
+        if combined_tiles > 0:
+            combinereward = combined_tiles * 10  # Reward for combining tiles
 
-        # Reward for the largest tile on the board
-        max_old_tile = np.max(old_grid)
-        max_new_tile = np.max(new_grid)
-        if max_new_tile > max_old_tile:
-            reward += max_new_tile * 2  # Significantly reward larger tiles
+        # Penalty for overcrowding
+        if np.count_nonzero(new_grid) > GRID_SIZE * GRID_SIZE * 0.75:  
+            reward += 2 * (np.count_nonzero(new_grid) - GRID_SIZE * GRID_SIZE)  # Penalize for having too many tiles
+
+        # Count how many tiles have moved
+        tiles_moved = np.sum(old_grid != new_grid)
+        if tiles_moved > 0:
+            reward += tiles_moved * 0.2  # Reward for moving multiple tiles
 
         # Check for repeated moves
-        if len(move_history) >= 4 and move_history[-1] == move_history[-3] and move_history[-2] == move_history[-4]:
-            reward -= 5  # Penalty for repeating the same two moves
+        if len(move_history) >= 4:
+            # Count the occurrences of each action
+            move_counts = {action: move_history.count(action) for action in set(move_history)}
+            
+            # Calculate the percentage of the most common move
+            max_move_count = max(move_counts.values())
+            percentage_repeated = max_move_count / len(move_history)
+
+            # Apply penalty if the percentage exceeds a threshold (e.g., 50%)
+            if percentage_repeated > 0.5:
+                reward -= 5  # Penalty for excessive repetition of the same move type
+            else:
+                reward += combinereward
+            
+            # Reward for less frequent moves
+            total_moves = len(move_history)
+            if total_moves > 12:
+                frequency_count = move_counts.get(action, 0)
+                frequency_percentage = frequency_count / total_moves
+
+                if frequency_percentage < 0.12:  # If this move is less than 25% of total moves
+                    reward += combinereward * 1.5  # Reward for making less frequent moves
 
         # Update move history
         move_history.append(action)
         if len(move_history) > 4:  # Keep only the last four moves for checking
             move_history.pop(0)
 
-        reward += max_new_tile / len(move_history)
         return reward
+
+
+
 
     def save(self, filename):
         with open(filename, 'wb') as f:
@@ -261,7 +363,7 @@ def start_game(player_type, game_number, bot_file=None):
 
         if game.player_type == 'bot' and bot_player:
             old_grid = game.get_board_state()
-            move = bot_player.choose_move(game)
+            move = bot_player.choose_move(game, move_history)
             if move:
                 game.move(move)
                 reward = bot_player.calculate_reward(old_grid, game.get_board_state(), move, move_history)  # Pass move history
@@ -275,7 +377,7 @@ def start_game(player_type, game_number, bot_file=None):
         if game.is_game_over():
             game_number = game_number + 1
             max_tile_achieved = np.max(game.grid)  # Get the max tile
-            print("Game ", game_number, "max tile: ", max_tile_achieved, " | Eff: ", (max_tile_achieved / moves))
+            print("Game ", game_number, "max tile: ", max_tile_achieved, " | Eff: ", (np.log2(max_tile_achieved) / np.log2(moves)))
             running = False
 
 
@@ -301,7 +403,7 @@ def main_menu():
 
         for i in range(iterations):
             max_tile = start_game(player_type, i, bot_file)  # Assuming start_game returns the max tile
-            max_tiles.append(max_tile)
+            max_tiles.append(np.log2(max_tile))
 
         print(f"Max Tiles from {iterations} iterations: {max_tiles}")  # Print or display max tiles
         plot_max_tiles(max_tiles)
